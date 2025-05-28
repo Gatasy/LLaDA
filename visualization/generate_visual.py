@@ -11,8 +11,6 @@ def add_gumbel_noise(logits, temperature):
     According to arXiv:2409.02908, for MDM, low-precision Gumbel Max improves perplexity score but reduces generation quality.
     Thus, we use float64.
     '''
-    if temperature == 0:
-        return logits
     logits = logits.to(torch.float64)
     noise = torch.rand_like(logits, dtype=torch.float64)
     gumbel_noise = (- torch.log(noise)) ** temperature
@@ -41,12 +39,12 @@ def get_num_transfer_tokens(mask_index, steps):
 
 
 @ torch.no_grad()
-def generate(model, prompt, steps=128, gen_length=128, block_length=128, temperature=0.,
+def generate(model, prompt, tokenizer, steps=128, gen_length=128, block_length=128, temperature=0.,
              cfg_scale=0., remasking='low_confidence', mask_id=126336):
     '''
     Args:
         model: Mask predictor.
-        prompt: A tensor of shape (1, L).
+        prompt: A tensor of shape (1, l).
         steps: Sampling steps, less than or equal to gen_length.
         gen_length: Generated answer length.
         block_length: Block length, less than or equal to gen_length. If less than gen_length, it means using semi_autoregressive remasking.
@@ -65,6 +63,8 @@ def generate(model, prompt, steps=128, gen_length=128, block_length=128, tempera
 
     assert steps % num_blocks == 0
     steps = steps // num_blocks
+
+    print_i = 0
 
     for num_block in range(num_blocks):
         block_mask_index = (x[:, prompt.shape[1] + num_block * block_length: prompt.shape[1] + (num_block + 1) * block_length:] == mask_id)
@@ -104,6 +104,21 @@ def generate(model, prompt, steps=128, gen_length=128, block_length=128, tempera
                 transfer_index[j, select_index] = True
             x[transfer_index] = x0[transfer_index]
 
+            print_i = print_i + 1
+            # Get generated token sequence (assuming batch_size=1)
+            generated_token_ids = x[0, prompt.shape[1]:]  # Take first sample by reducing dimension
+            formatted_output = []
+            for token_id in generated_token_ids:
+                # Decode single token and handle newlines
+                decoded_token = tokenizer.decode(token_id).replace("\n", " ").replace("<|eot_id|>", " ").replace("<|endoftext|>", " ")
+                
+                # Add asterisk wrapping (preserve original space positions)
+                formatted_token = f"*{decoded_token}&"
+                formatted_output.append(formatted_token)
+            # Combine final output
+            final_output = "".join(formatted_output).strip()
+            print(f"{print_i}, {final_output}", file=open("sample_process.txt", "a"))
+
     return x
 
 
@@ -113,7 +128,7 @@ def main():
     model = AutoModel.from_pretrained('GSAI-ML/LLaDA-8B-Instruct', trust_remote_code=True, torch_dtype=torch.bfloat16).to(device).eval()
     tokenizer = AutoTokenizer.from_pretrained('GSAI-ML/LLaDA-8B-Instruct', trust_remote_code=True)
 
-    prompt = "Lily can run 12 kilometers per hour for 4 hours. After that, she runs 6 kilometers per hour. How many kilometers can she run in 8 hours?"
+    prompt = "Explain what artificial intelligence is."
 
     # Add special tokens for the Instruct model. The Base model does not require the following two lines.
     m = [{"role": "user", "content": prompt}, ]
@@ -122,8 +137,7 @@ def main():
     input_ids = tokenizer(prompt)['input_ids']
     input_ids = torch.tensor(input_ids).to(device).unsqueeze(0)
 
-    out = generate(model, input_ids, steps=128, gen_length=128, block_length=32, temperature=0., cfg_scale=0., remasking='low_confidence')
-    print(tokenizer.batch_decode(out[:, input_ids.shape[1]:], skip_special_tokens=True)[0])
+    out = generate(model, input_ids, tokenizer, steps=64, gen_length=64, block_length=64, temperature=0., cfg_scale=0., remasking='random')
 
 
 if __name__ == '__main__':

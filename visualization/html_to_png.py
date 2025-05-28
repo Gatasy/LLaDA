@@ -28,3 +28,4 @@ for type_txt in types:
             save_as=f'visualization_step_{i}.png',
             size=(1200, 500) if type_txt == 'zhihu' else (1200, 800)
         )
+        print(f"[Done] Saved PNG: {output_dir}/visualization_step_{i}.png")    
